@@ -17,9 +17,11 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // initCmd represents the init command
@@ -67,7 +69,7 @@ Init will not use an existing directory with contents.`,
 		fmt.Fprintln(cmd.OutOrStdout(), `Your CRUD application is ready at
 `+project.AbsPath()+`
 Give it a try by going there and running `+"`go run main.go`."+`
-Add a resource to it by running `+"`crudy generate userd`.")
+Add a resource to it by running `+"`crudy generate user`.")
 	},
 }
 
@@ -78,5 +80,61 @@ func init() {
 }
 
 func initializeProject(pro *Project) {
+	if !exists(pro.AbsPath()) { // If path doesn't yet exist, create it
+		err := os.MkdirAll(pro.AbsPath(), os.ModePerm)
+		if err != nil {
+			er(err)
+		}
+	} else if !isEmpty(pro.AbsPath()) { // If path exists and is not empty don't use it
+		er("Crudy will not create a new project in a non empty directory: " + pro.AbsPath())
+	}
 
+	createMainFile(pro)
+}
+
+func createMainFile(pro *Project) {
+	tpl := `{{ comment .copyright }}
+	{{if .license}}{{ comment .license }}{{end}}
+		package main
+
+		import (
+			"log"
+
+		)
+
+		func main() {
+			config, err := InitConfig()
+			if err != nil {
+				log.Fatal("Could not load config")
+			}
+
+			db, err := InitDB(config)
+			if err != nil {
+				log.Fatal("Could not connect to the db")
+			}
+			defer db.Close()
+
+			env := &model.Env{
+
+			}
+
+			router := router.InitRouter(config, env)
+			router.Run(":2323")
+    }`
+
+	data := make(map[string]interface{})
+	data["copyright"] = copyrightLine()
+	data["viper"] = viper.GetBool("useViper")
+	data["license"] = pro.License().Header
+	data["appName"] = path.Base(pro.Name())
+
+	mainScript, err := executeTemplate(tpl, data)
+	if err != nil {
+		er(err)
+	}
+
+	err = writeStringToFile(filepath.Join(pro.AbsPath(), "main.go"), mainScript)
+	if err != nil {
+		er(err)
+	}
 }
