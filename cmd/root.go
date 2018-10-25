@@ -55,9 +55,8 @@ func init() {
 	viper.BindPFlag("author", rootCmd.PersistentFlags().Lookup("author"))
 	viper.BindPFlag("useViper", rootCmd.PersistentFlags().Lookup("viper"))
 	viper.SetDefault("author", "NAME HERE <EMAIL ADDRESS>")
-	viper.SetDefault("license", "apache")
+	// viper.SetDefault("license", "") // default no license
 
-	// rootCmd.AddCommand(initCmd)
 }
 
 // initConfig reads in config file and ENV variables if set.
