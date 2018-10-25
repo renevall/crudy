@@ -16,6 +16,7 @@ package cmd
 import (
 	"bytes"
 	"fmt"
+	"go/format"
 	"io"
 	"os"
 	"os/exec"
@@ -118,7 +119,11 @@ func executeTemplate(tmplStr string, data interface{}) (string, error) {
 
 	buf := new(bytes.Buffer)
 	err = tmpl.Execute(buf, data)
-	return buf.String(), err
+	p, err := format.Source(buf.Bytes())
+	if err != nil {
+		er("could not format template with gofmt")
+	}
+	return string(p), err
 }
 
 func writeStringToFile(path string, s string) error {
