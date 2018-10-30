@@ -68,8 +68,9 @@ Init will not use an existing directory with contents.`,
 
 		fmt.Fprintln(cmd.OutOrStdout(), `Your CRUD application is ready at
 `+project.AbsPath()+`
-Give it a try by going there and running `+"`go run main.go`."+`
-Add a resource to it by running `+"`crudy generate user`.")
+Give it a try by going there and running $ go run main.go
+Don't forget to $ go get -v ./... to get all dependencies
+Add a resource to it by running crudy generate user`)
 	},
 }
 
