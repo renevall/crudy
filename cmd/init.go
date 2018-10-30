@@ -93,6 +93,8 @@ func initializeProject(pro *Project) {
 	createDBFile(pro)
 	createConfigFile(pro)
 	createRouterFile(pro)
+	createConfigModel(pro)
+	createEnvModel(pro)
 }
 
 func createMainFile(pro *Project) {
@@ -102,6 +104,9 @@ func createMainFile(pro *Project) {
 
 		import (
 			"log"
+			{{if .domain}} "{{ .domain }}" {{end}}
+			{{if .router}} "{{ .router }}" {{end}}
+
 
 		)
 
@@ -130,6 +135,8 @@ func createMainFile(pro *Project) {
 	data["viper"] = viper.GetBool("useViper")
 	data["license"] = pro.License().Header
 	data["appName"] = path.Base(pro.Name())
+	data["domain"] = filepath.Join(pro.Name(), "/model")
+	data["router"] = filepath.Join(pro.Name(), "/router")
 
 	mainScript, err := executeTemplate(tpl, data)
 	if err != nil {
@@ -144,51 +151,124 @@ func createMainFile(pro *Project) {
 
 func createDBFile(pro *Project) {
 
+	tpl := `package main
+
+	import (
+		"fmt"
+		"log"
+		"time"
+		
+		{{if .domain}} "{{ .domain }}" {{end}}
+		"github.com/jinzhu/gorm"
+		_ "github.com/jinzhu/gorm/dialects/postgres"
+	)
+	
+	// InitDB starts the DB
+	func InitDB(config *model.Config) (*gorm.DB, error) {
+		log.Println("Connecting to database")
+		cnx := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable",
+			config.DBHost, config.DBUser, config.DBPassword, config.DBName, config.DBPort)
+	
+		db, err := gorm.Open("postgres", cnx)
+		if err != nil {
+			fmt.Println(err)
+			return nil, err	
+		}
+
+		db.LogMode(true)
+		
+		// Ping until connection comes alive, docker.
+		var dbError error
+		maxAttempts := 5
+		for attempts := 1; attempts <= maxAttempts; attempts++ {
+			dbError = db.DB().Ping()
+			if dbError == nil {
+				break
+			}
+			log.Println(dbError)
+			time.Sleep(time.Duration(attempts) * time.Second)
+		}
+
+		if dbError != nil {
+			log.Fatal(dbError)
+		}
+	
+		db.AutoMigrate()
+		return db, nil
+	}`
+
+	data := make(map[string]interface{})
+	data["domain"] = filepath.Join(pro.Name(), "/model")
+
+	mainScript, err := executeTemplate(tpl, data)
+	if err != nil {
+		er(err)
+	}
+
+	err = writeStringToFile(filepath.Join(pro.AbsPath(), "db.go"), mainScript)
+	if err != nil {
+		er(err)
+	}
 }
 
 func createConfigFile(pro *Project) {
 	tpl := `package main
 
-import (
-	"os"
-	"path/filepath"
+	import (
+		"os"
+		"path/filepath"
 
-	"github.com/spf13/viper"
-)
+		{{if .domain}} "{{ .domain }}" {{end}}
+		"github.com/spf13/viper"
+	)
 
-//Config struct, must be injected where needed.
-type Config struct {
-	Secret string
-}
+	//InitConfig reads configuration files
+	func InitConfig() (*model.Config, error) {
 
-//InitConfig reads configuration files
-func InitConfig() (*Config, error) {
+		viper.SetEnvPrefix("prefix")
+		if os.Getenv("Enviroment") == "dev" {
+			viper.SetConfigName(".conf")
+			viper.SetConfigType("toml")
+			viper.AddConfigPath(filepath.Dir(""))
+			viper.ReadInConfig()
+		} else {
+			viper.AutomaticEnv()
+		}
 
-	viper.SetEnvPrefix("prefix")
-	if os.Getenv("Enviroment") == "dev" {
-		viper.SetConfigName(".conf")
-		viper.SetConfigType("toml")
-		viper.AddConfigPath(filepath.Dir(""))
-		viper.ReadInConfig()
-	} else {
-		viper.AutomaticEnv()
+		//defaults
+		viper.SetDefault("PREFIX_SECRET", "generatecode")
+		viper.SetDefault("PREFIX_DBHOST", "localhost")
+		viper.SetDefault("PREFIX_DBUSER", "user")
+		viper.SetDefault("PREFIX_DBPASSWORD", "password")
+		viper.SetDefault("PREFIX_DBNAME", "sample")
+		viper.SetDefault("PREFIX_DBPORT", 5432)
+
+		secret := viper.GetString("PREFIX_SECRET")
+		dbhost := viper.GetString("PREFIX_DBHOST")
+		dbuser := viper.GetString("PREFIX_DBUSER")
+		dbpassword := viper.GetString("PREFIX_DBPASSWORD")
+		dbname := viper.GetString("PREFIX_DBNAME")
+		dbport := viper.GetInt("PREFIX_DBPORT")
+
+		return NewConfig(secret,dbhost,dbuser,dbpassword,dbname,dbport), nil
 	}
 
-	//defaults
-	viper.SetDefault("PREFIX_SECRET", "Random string")
-	secret := viper.GetString("PREFIX_SECRET")
+	//NewConfig Returns a new configuration object
+	func NewConfig(vals ...interface{}) *model.Config {
+		return &model.Config{
+			Secret:     vals[0].(string),
+			DBHost:     vals[1].(string),
+			DBUser:     vals[2].(string),
+			DBPassword: vals[3].(string),
+			DBName:     vals[4].(string),
+			DBPort:     vals[5].(int),
+		}
+	}`
 
-	return NewConfig(secret), nil
-}
+	data := make(map[string]interface{})
+	data["domain"] = filepath.Join(pro.Name(), "/model")
 
-//NewConfig Returns a new configuration object
-func NewConfig(vals ...interface{}) *Config {
-	return &Config{
-		Secret: vals[0].(string),
-	}
-}`
-
-	mainScript, err := executeTemplate(tpl, nil)
+	mainScript, err := executeTemplate(tpl, data)
 	if err != nil {
 		er(err)
 	}
@@ -200,5 +280,112 @@ func NewConfig(vals ...interface{}) *Config {
 }
 
 func createRouterFile(pro *Project) {
+	tpl := `package router
 
+ import (
+	 "fmt"
+	 "net/http"
+ 
+	 {{if .domain}} "{{ .domain }}" {{end}}
+	 "github.com/gin-gonic/gin"
+ )
+ 
+ // We initialize router and set the basic routes.
+ func InitRouter(config *model.Config, env *model.Env) *gin.Engine {
+	 router := gin.Default()
+	 router.Use(CORSMiddleware())
+ 
+	 // Sample User CRUD
+	//  user := router.Group("/user")
+	//  {
+	// 	 user.POST("/", UserCreateHandler(config, env.User)) //Create User
+	// 	 user.GET("/", UserListHandler(config, env.User))    //Read All Users
+	// 	 user.GET("/:id", UserFindHandler(config, env.User))
+	// 	 user.PATCH("/:id", UserUpdateHandler(config, env.User)) //Update User
+	// 	 user.DELETE("/:id", NotImplementedHandler())            //Delete User44
+ 
+	//  }
+ 
+	 return router
+ 
+ }
+ 
+ // NotImplementedHandler is returned when the handler is not done
+ func NotImplementedHandler() gin.HandlerFunc {
+	 return func(c *gin.Context) {
+		 c.JSON(http.StatusNotFound, gin.H{"status": "Fail", "message": "Handler not implemented"})
+	 }
+ }
+ 
+ // CORSMiddleware set the CORS headers
+ func CORSMiddleware() gin.HandlerFunc {
+	 return func(c *gin.Context) {
+		 c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		 c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
+		 c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding")
+		 c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length")
+		 c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+ 
+		 if c.Request.Method == "OPTIONS" {
+			 fmt.Println("OPTIONS")
+			 c.AbortWithStatus(200)
+		 } else {
+			 c.Next()
+		 }
+	 }
+ }
+ `
+	data := make(map[string]interface{})
+	data["domain"] = filepath.Join(pro.Name(), "/model")
+
+	mainScript, err := executeTemplate(tpl, data)
+	if err != nil {
+		er(err)
+	}
+
+	err = writeStringToFile(filepath.Join(pro.AbsPath(), "/router", "router.go"), mainScript)
+	if err != nil {
+		er(err)
+	}
+}
+
+func createConfigModel(pro *Project) {
+	tpl := `package model
+	//Config struct, must be injected where needed.
+	type Config struct {
+		Secret string
+		DBHost string
+		DBUser string
+		DBPassword string
+		DBName string
+		DBPort int
+	}`
+
+	mainScript, err := executeTemplate(tpl, nil)
+	if err != nil {
+		er(err)
+	}
+
+	err = writeStringToFile(filepath.Join(pro.AbsPath(), "/model", "config.go"), mainScript)
+	if err != nil {
+		er(err)
+	}
+}
+
+func createEnvModel(pro *Project) {
+	tpl := `package model
+	//Env struct, used to help wiring up depencencies sent to the router
+	type Env struct {
+		// SampleStore InterfaceName
+	}`
+
+	mainScript, err := executeTemplate(tpl, nil)
+	if err != nil {
+		er(err)
+	}
+
+	err = writeStringToFile(filepath.Join(pro.AbsPath(), "/model", "env.go"), mainScript)
+	if err != nil {
+		er(err)
+	}
 }

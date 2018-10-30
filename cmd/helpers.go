@@ -121,6 +121,7 @@ func executeTemplate(tmplStr string, data interface{}) (string, error) {
 	err = tmpl.Execute(buf, data)
 	p, err := format.Source(buf.Bytes())
 	if err != nil {
+		fmt.Println(err)
 		er("could not format template with gofmt")
 	}
 	return string(p), err
